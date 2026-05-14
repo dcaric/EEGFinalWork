@@ -1,6 +1,7 @@
 # Data Handling
 pandas
 openpyxl
+mne
 
 # Machine Learning & Stats (Phase 1)
 scikit-learn

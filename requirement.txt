@@ -1,0 +1,15 @@
+# Data Handling
+pandas
+openpyxl
+
+# Machine Learning & Stats (Phase 1)
+scikit-learn
+numpy
+
+# Visualization (As requested by mentor for the thesis)
+matplotlib
+seaborn
+
+# Deep Learning (Phase 2 - for RNN/LSTM)
+torch
+torchvision

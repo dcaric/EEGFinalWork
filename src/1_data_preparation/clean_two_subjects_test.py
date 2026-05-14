@@ -1,0 +1,214 @@
+import os
+
+import pandas as pd
+
+
+# =========================
+# 1. SETUP PATHS
+# =========================
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+BASE_DIR = os.path.join(PROJECT_ROOT, "data")
+
+METADATA_PATH = os.path.join(PROJECT_ROOT, "DatasetSub_shorten.csv")
+OUTPUT_FILE = os.path.join(PROJECT_ROOT, "pilot_files", "all_task_ready_2subjects.csv")
+DIAG_FILE = os.path.join(PROJECT_ROOT, "pilot_files", "all_task_ready_2subjects_diagnostics.csv")
+
+SUBJECT_IDS = ["BA9", "BA39"]
+
+
+# =========================
+# 2. LOAD METADATA
+# =========================
+print("--- Step 1: Loading Metadata ---")
+metadata_df = pd.read_csv(METADATA_PATH, sep=";", header=1, decimal=",")
+metadata_df = metadata_df.dropna(subset=["ID"]).copy()
+metadata_df["ID_upper"] = metadata_df["ID"].astype(str).str.strip().str.upper()
+selected_meta = metadata_df[metadata_df["ID_upper"].isin(SUBJECT_IDS)].copy()
+
+if selected_meta.empty:
+    raise ValueError("No matching metadata rows found for BA9 / BA39.")
+
+print(selected_meta[["ID", "Average Sleep Hours per Night", "Gender"]].to_string(index=False))
+
+
+# =========================
+# 3. QUALITY SETTINGS
+# =========================
+MIN_OVERALL_CQ = 0.7
+MIN_CHANNEL_CQ = 2
+
+
+def quality_mask(data: pd.DataFrame) -> pd.Series:
+    mask = data["EEG.Interpolated"] == 0
+
+    overall_cq = pd.to_numeric(data["CQ.Overall"], errors="coerce")
+    if overall_cq.dropna().max() is not None and overall_cq.dropna().max() <= 1.0:
+        mask &= overall_cq >= MIN_OVERALL_CQ
+    else:
+        mask &= overall_cq >= (MIN_OVERALL_CQ * 100)
+
+    channel_cq_cols = [c for c in data.columns if c.startswith("CQ.") and c != "CQ.Overall"]
+    channel_cq = data[channel_cq_cols].apply(pd.to_numeric, errors="coerce")
+    mask &= (channel_cq >= MIN_CHANNEL_CQ).all(axis=1)
+
+    return mask
+
+
+# =========================
+# 4. PROCESSING LOOP
+# =========================
+all_task_features = []
+diagnostics = []
+
+print("\n--- Step 2: Processing Two Subjects ---")
+
+for _, row in selected_meta.iterrows():
+    subject_id = str(row["ID"]).strip()
+    folder_name = subject_id.lower()
+    data_path = os.path.join(BASE_DIR, folder_name, "data.csv")
+    marker_path = os.path.join(BASE_DIR, folder_name, "marker.csv")
+
+    if not os.path.exists(data_path) or not os.path.exists(marker_path):
+        print(f"Skipping {subject_id}: missing data.csv or marker.csv")
+        continue
+
+    print(f"Processing {subject_id}...")
+
+    data = pd.read_csv(data_path, header=1, low_memory=False)
+    markers = pd.read_csv(marker_path)
+
+    raw_rows = len(data)
+    clean_mask = quality_mask(data)
+    clean_data = data[clean_mask].copy()
+    clean_rows = len(clean_data)
+
+    pow_cols = [c for c in clean_data.columns if "POW." in c]
+    pm_cols = [c for c in clean_data.columns if "PM." in c and ".Scaled" in c]
+    metrics_to_avg = pow_cols + pm_cols
+
+    clean_data["MarkerIndex"] = pd.to_numeric(clean_data["MarkerIndex"], errors="coerce")
+    clean_data["Timestamp"] = pd.to_numeric(clean_data["Timestamp"], errors="coerce")
+
+    id_to_task = dict(zip(markers["marker_id"], markers["type"]))
+
+    task_count = 0
+    for marker_id, task_type in id_to_task.items():
+        start_rows = clean_data[clean_data["MarkerIndex"] == marker_id]
+        end_rows = clean_data[clean_data["MarkerIndex"] == -marker_id]
+
+        if start_rows.empty or end_rows.empty:
+            diagnostics.append(
+                {
+                    "Subject_ID": subject_id,
+                    "Task": task_type,
+                    "marker_id": marker_id,
+                    "status": "missing_start_or_end",
+                    "raw_rows": raw_rows,
+                    "clean_rows": clean_rows,
+                }
+            )
+            continue
+
+        t_start = start_rows["Timestamp"].iloc[0]
+        t_end = end_rows["Timestamp"].iloc[0]
+
+        if pd.isna(t_start) or pd.isna(t_end) or t_end <= t_start:
+            diagnostics.append(
+                {
+                    "Subject_ID": subject_id,
+                    "Task": task_type,
+                    "marker_id": marker_id,
+                    "status": "bad_timestamps",
+                    "raw_rows": raw_rows,
+                    "clean_rows": clean_rows,
+                    "t_start": t_start,
+                    "t_end": t_end,
+                }
+            )
+            continue
+
+        task_segment = clean_data[
+            (clean_data["Timestamp"] >= t_start) &
+            (clean_data["Timestamp"] <= t_end)
+        ].copy()
+
+        if task_segment.empty:
+            diagnostics.append(
+                {
+                    "Subject_ID": subject_id,
+                    "Task": task_type,
+                    "marker_id": marker_id,
+                    "status": "empty_segment",
+                    "raw_rows": raw_rows,
+                    "clean_rows": clean_rows,
+                    "t_start": t_start,
+                    "t_end": t_end,
+                }
+            )
+            continue
+
+        if "POW.AF3.Theta" in task_segment.columns and task_segment["POW.AF3.Theta"].isna().all():
+            diagnostics.append(
+                {
+                    "Subject_ID": subject_id,
+                    "Task": task_type,
+                    "marker_id": marker_id,
+                    "status": "fft_missing",
+                    "raw_rows": raw_rows,
+                    "clean_rows": clean_rows,
+                    "segment_rows": len(task_segment),
+                    "t_start": t_start,
+                    "t_end": t_end,
+                }
+            )
+            continue
+
+        task_averages = task_segment[metrics_to_avg].mean().to_dict()
+        task_averages.update(
+            {
+                "Subject_ID": subject_id,
+                "Task": task_type,
+                "Sleep_Hours": float(row["Average Sleep Hours per Night"]),
+                "Gender": row["Gender"],
+            }
+        )
+        all_task_features.append(task_averages)
+
+        diagnostics.append(
+            {
+                "Subject_ID": subject_id,
+                "Task": task_type,
+                "marker_id": marker_id,
+                "status": "ok",
+                "raw_rows": raw_rows,
+                "clean_rows": clean_rows,
+                "segment_rows": len(task_segment),
+                "t_start": t_start,
+                "t_end": t_end,
+                "duration_ticks": t_end - t_start,
+            }
+        )
+        task_count += 1
+
+    print(f"  Extracted task segments: {task_count}")
+
+
+# =========================
+# 5. SAVE OUTPUTS
+# =========================
+if not all_task_features:
+    raise ValueError("No task features were extracted for the two test subjects.")
+
+final_df = pd.DataFrame(all_task_features)
+diag_df = pd.DataFrame(diagnostics)
+
+if "POW.AF3.Theta" in final_df.columns:
+    final_df = final_df.dropna(subset=["POW.AF3.Theta"])
+
+final_df.to_csv(OUTPUT_FILE, index=False)
+diag_df.to_csv(DIAG_FILE, index=False)
+
+print(f"\nSaved test dataset to: {OUTPUT_FILE}")
+print(f"Saved diagnostics to: {DIAG_FILE}")
+print(f"Rows: {len(final_df)} | Subjects: {final_df['Subject_ID'].nunique()} | Tasks: {final_df['Task'].nunique()}")

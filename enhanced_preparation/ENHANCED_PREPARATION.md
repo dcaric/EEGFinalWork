@@ -61,3 +61,26 @@ If the filtered 2-subject dataset produces roughly the expected number of cognit
 that supports the view that the original full preprocessing pipeline is structurally reasonable.
 
 If the filtered output still looks strange, then the segmentation logic itself should be reviewed more deeply.
+
+## Current conclusion from the 2-subject audit
+
+The filtered audit produced results much closer to the original pipeline expectations:
+
+- `BA9` kept `36` tasks
+- `BA39` kept `34` tasks
+- non-task markers were heavily filtered out
+- only two expected task segments were missing start/end markers in `BA39`
+
+So this supports the idea that the original procedure was not fundamentally wrong.
+The preprocessing may still be lossy, but the marker/task filtering logic appears to be doing the right kind of work.
+
+### Main takeaway
+
+The sandbox suggests:
+
+- the original pipeline is probably methodologically limited, but not broken
+- the poor model results are still more likely due to:
+  - weak signal
+  - coarse target
+  - small sample
+  - heavy averaging

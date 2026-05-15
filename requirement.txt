@@ -5,6 +5,7 @@ mne
 
 # Machine Learning & Stats (Phase 1)
 scikit-learn
+xgboost
 numpy
 
 # Visualization (As requested by mentor for the thesis)

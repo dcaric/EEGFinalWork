@@ -33,6 +33,12 @@ Several modeling approaches were tested on the current EEG dataset.
   - did not improve performance
   - confirmed that more rows from the same people do not add more independent signal
 
+- XGBoost on the stimulus-level median dataset:
+  - was tested as a strong non-linear tabular alternative to `RandomForest`
+  - improved regression slightly over the earlier stimulus-level `RandomForest`
+  - did not outperform the best binary `RandomForest` majority-vote result
+  - strengthened the conclusion that algorithm choice alone does not rescue the dataset
+
 - Subject-level clustering:
   - `KMeans` and `AgglomerativeClustering`
   - found some structure in EEG feature space
@@ -56,6 +62,7 @@ Together, the models showed:
 - the data contain at most weak sleep-related signal
 - no tested model produced robust prediction of sleep duration
 - failure was consistent across regression, classification, balancing, tuning, and clustering
+- even a stronger gradient-boosted tree method only produced marginal gain in regression
 - this consistency strengthens the conclusion, because it does not depend on one weak modeling choice
 
 An additional synthetic-balancing experiment showed that performance can improve when the low-sleep region is artificially densified. This does not overturn the main conclusion from the real data, but it does suggest that low-sleep underrepresentation was one of the key practical constraints.
@@ -65,6 +72,19 @@ An additional synthetic-balancing experiment showed that performance can improve
 The main data source was:
 
 - `pilot_files/all_task_ready.csv`
+
+For the professor-guided raw-data resampling stage, the main derived modeling file became:
+
+- `enhanced_preparation/all_task_stimulus_median_ready.csv`
+
+This file contains:
+
+- `2,830` subject-by-stimulus rows
+- `83` subjects
+- `36` unique tasks
+- `77` EEG and PM features
+- subject-level `Sleep_Hours` repeated across a subject's stimulus rows
+- `Num_Windows` showing how many raw windows were summarized into that stimulus row
 
 This dataset contains:
 
@@ -82,6 +102,7 @@ Several derived modeling tables were created from this source:
 - top-task subject averages
 - grouped all-task supervised versions
 - normalized and balanced subject-level analyses
+- raw-derived window-level and stimulus-level median tables
 
 An additional exploratory dataset was also created:
 
@@ -137,6 +158,69 @@ The main limitations were:
 These limitations prevented the models from becoming more accurate.
 
 In addition, synthetic balancing showed that the model can improve when more low-sleep-like samples are present, but because these samples were artificially generated, that improvement cannot be interpreted as proof that the original real dataset contained strong recoverable biological signal.
+
+The later XGBoost experiments reinforced the same interpretation. The regression result improved slightly compared with stimulus-level `RandomForest`, but the effect size remained very small, and the binary XGBoost model was still not better than the best earlier binary `RandomForest` result.
+
+## XGBoost Follow-Up on the Stimulus-Level Median Dataset
+
+To test whether a stronger gradient-boosted tree method could rescue the signal, two additional subject-safe experiments were run on:
+
+- `enhanced_preparation/all_task_stimulus_median_ready.csv`
+
+### XGBoost Binary Classification
+
+The binary target remained:
+
+- `LowSleep`: `<7h`
+- `HigherSleep`: `>=7h`
+
+The XGBoost binary result was:
+
+- accuracy: `0.6024`
+- macro F1: `0.5908`
+- `LowSleep` precision: `0.53`
+- `LowSleep` recall: `0.51`
+- `LowSleep` F1: `0.52`
+- `HigherSleep` precision: `0.65`
+- `HigherSleep` recall: `0.67`
+- `HigherSleep` F1: `0.66`
+
+Compared with the earlier stimulus-level `RandomForest` binary result:
+
+- `RandomForest` accuracy: `0.6386`
+- `RandomForest` macro F1: `0.6025`
+
+This means XGBoost was slightly worse overall than the best earlier binary `RandomForest`, even though it produced a reasonably balanced `LowSleep` detection profile.
+
+### XGBoost Regression
+
+The XGBoost regression result was:
+
+- dummy baseline RMSE: `0.7805`
+- XGBoost mean-aggregation RMSE: `0.7621`
+- XGBoost mean-aggregation MAE: `0.6157`
+- XGBoost mean-aggregation R²: `0.0228`
+- XGBoost median-aggregation RMSE: `0.7669`
+- XGBoost median-aggregation MAE: `0.6197`
+- XGBoost median-aggregation R²: `0.0103`
+
+Compared with the earlier stimulus-level `RandomForest` regression:
+
+- `RandomForest` mean-aggregation RMSE: `0.7678`
+- `RandomForest` mean-aggregation R²: `0.0081`
+
+So XGBoost regression was the best exact-hours stimulus-level regressor tested so far, but only by a very small margin. The `R²` value remained close to zero, which means the model still explained only a tiny fraction of the sleep-hour variability.
+
+### Interpretation
+
+The XGBoost follow-up is valuable because it tested one of the strongest remaining classical tabular ML options.
+
+It showed:
+
+- the binary problem is still only moderately learnable
+- the regression problem remains weak
+- XGBoost does not fundamentally change the conclusion
+- the bottleneck is still more likely the dataset and target definition than the choice between strong classical algorithms
 
 ## Synthetic Balancing Experiment
 
@@ -380,6 +464,7 @@ It showed:
 - that non-task markers must be filtered carefully
 - that unsupervised structure exists, but not in a way that aligns with sleep duration
 - that synthetic balancing can improve metrics, which supports the view that low-sleep sample sparsity was a real limitation
+- that XGBoost gives only marginal gains, which further supports the conclusion that the main limitation is data quality and target informativeness
 
 This work therefore reduces uncertainty for future development. It narrows the search space and prevents future work from repeating the same ineffective directions.
 
@@ -404,7 +489,8 @@ To move toward a better final model, future work should focus on:
 - aligning EEG recording more closely with the sleep-measurement window
 - exploring larger external datasets if available
 - testing whether improvements seen under synthetic balancing can be reproduced with genuinely new real low-sleep participants
+- evaluating whether XGBoost-like gains can be amplified only when richer labels or genuinely more informative EEG features are introduced
 
 ## Overall Thesis Message
 
-This work rigorously evaluated whether task-based EEG summary features can predict habitual sleep duration. Across multiple preprocessing choices and modeling strategies, prediction on the real dataset remained weak and close to baseline. A supplementary synthetic-balancing experiment improved the numerical results, suggesting that sparsity in the low-sleep region was one important bottleneck, but these gains cannot be interpreted as equivalent to generalization on new real subjects. Taken together, the findings indicate that the present dataset and feature representation are insufficient for robust final sleep prediction, while still providing a valuable methodological foundation for future work by identifying the main bottlenecks, validating the preprocessing logic, and clarifying what improvements are required to reach a stronger final model.
+This work rigorously evaluated whether task-based EEG summary features can predict habitual sleep duration. Across multiple preprocessing choices and modeling strategies, prediction on the real dataset remained weak and close to baseline. A supplementary synthetic-balancing experiment improved the numerical results, suggesting that sparsity in the low-sleep region was one important bottleneck, but these gains cannot be interpreted as equivalent to generalization on new real subjects. A later XGBoost follow-up slightly improved stimulus-level regression but did not change the practical conclusion and did not beat the strongest earlier binary `RandomForest` result. Taken together, the findings indicate that the present dataset and feature representation are insufficient for robust final sleep prediction, while still providing a valuable methodological foundation for future work by identifying the main bottlenecks, validating the preprocessing logic, and clarifying what improvements are required to reach a stronger final model.

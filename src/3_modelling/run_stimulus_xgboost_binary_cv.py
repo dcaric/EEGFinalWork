@@ -1,42 +1,66 @@
 """
-Run subject-safe stimulus-level classification with subject-level majority vote.
+Run subject-safe stimulus-level binary classification with subject-level majority vote
+using XGBoost.
 
-Idea:
-  - One row = one subject x stimulus aggregate (typically median across windows)
-  - Train the model on stimulus rows
-  - Split by Subject_ID to avoid leakage
-  - Predict one class per stimulus row
-  - Collapse each held-out subject to a final class using majority vote
+Binary target:
+  LowSleep    -> Sleep_Hours < 7
+  HigherSleep -> Sleep_Hours >= 7
 
-This follows the professor's suggestion:
-  keep more granular rows than a single 81 x 70 subject matrix, then aggregate
-  predictions back to the subject level.
+Pipeline:
+  - one row = one subject x stimulus aggregate (median across windows)
+  - train on stimulus rows
+  - split by Subject_ID to avoid leakage
+  - predict one class per stimulus row
+  - collapse each held-out subject to a final class using majority vote
+
+Saved outputs:
+  results/stimulus_xgboost_binary_cv/
+    xgb_binary_subject_majority_vote_predictions.csv
+    xgb_binary_stimulus_predictions.csv
+    xgb_binary_task_summary.csv
+    xgb_binary_metrics.txt
+    xgb_binary_subject_majority_vote_confusion.png
+    xgb_binary_subject_majority_vote_overview.png
+    xgb_binary_task_prediction_distribution.png
+    xgb_binary_task_prediction_heatmap.png
 """
 
 from collections import Counter
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 from sklearn.model_selection import LeaveOneGroupOut
+
+try:
+    from xgboost import XGBClassifier
+except ImportError as exc:  # pragma: no cover - import guard
+    raise SystemExit(
+        "xgboost is not installed in the active venv.\n"
+        "Install it with:\n"
+        "  pip install xgboost\n"
+    ) from exc
 
 
 BASE_DIR = Path(__file__).parent.parent.parent
 INPUT_FILE = BASE_DIR / "enhanced_preparation" / "all_task_stimulus_median_ready.csv"
-OUT_DIR = BASE_DIR / "results" / "stimulus_majority_vote_cv"
+OUT_DIR = BASE_DIR / "results" / "stimulus_xgboost_binary_cv"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-BINS = [0, 6, 8, 99]
-LABELS = ["Short", "Normal", "Long"]
+LABELS = ["LowSleep", "HigherSleep"]
 RANDOM_STATE = 42
 
 
-def majority_vote(preds: list[str], proba: np.ndarray, classes: np.ndarray) -> tuple[str, dict[str, int]]:
+def make_binary_label(hours: float) -> str:
+    return "LowSleep" if float(hours) < 7 else "HigherSleep"
+
+
+def majority_vote(preds: list[str], proba: np.ndarray) -> tuple[str, dict[str, int]]:
     counts = Counter(preds)
     max_count = max(counts.values())
     top_labels = [label for label, count in counts.items() if count == max_count]
@@ -44,12 +68,15 @@ def majority_vote(preds: list[str], proba: np.ndarray, classes: np.ndarray) -> t
     if len(top_labels) == 1:
         return top_labels[0], dict(counts)
 
-    proba_sums = pd.Series(proba.sum(axis=0), index=classes)
-    top_label = proba_sums.loc[top_labels].sort_values(ascending=False).index[0]
-    return str(top_label), dict(counts)
+    proba_sums = {
+        "LowSleep": float(proba[:, 0].sum()),
+        "HigherSleep": float(proba[:, 1].sum()),
+    }
+    top_label = sorted(top_labels, key=lambda label: proba_sums[label], reverse=True)[0]
+    return top_label, dict(counts)
 
 
-def save_subject_confusion_matrix(cm: np.ndarray) -> None:
+def save_confusion_matrix(cm: np.ndarray) -> None:
     fig, ax = plt.subplots(figsize=(5, 4))
     im = ax.imshow(cm, cmap="Blues")
     ax.set_xticks(range(len(LABELS)))
@@ -58,7 +85,7 @@ def save_subject_confusion_matrix(cm: np.ndarray) -> None:
     ax.set_yticklabels(LABELS)
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Actual")
-    ax.set_title("Subject-Level Majority Vote\nConfusion Matrix")
+    ax.set_title("XGBoost Binary Subject-Level Majority Vote\nConfusion Matrix")
     threshold = cm.max() / 2 if cm.size else 0
     for i in range(len(LABELS)):
         for j in range(len(LABELS)):
@@ -73,7 +100,7 @@ def save_subject_confusion_matrix(cm: np.ndarray) -> None:
             )
     fig.colorbar(im, ax=ax, shrink=0.8)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "subject_majority_vote_confusion.png", dpi=150)
+    fig.savefig(OUT_DIR / "xgb_binary_subject_majority_vote_confusion.png", dpi=150)
     plt.close(fig)
 
 
@@ -81,18 +108,18 @@ def save_subject_vote_chart(subject_df: pd.DataFrame) -> None:
     plot_df = subject_df.copy()
     plot_df["Correct"] = plot_df["Actual_Cat"] == plot_df["Predicted_Cat"]
     plot_df["Label"] = plot_df.apply(
-        lambda r: f"{r['Subject_ID']}\nA:{r['Actual_Cat']} P:{r['Predicted_Cat']}",
+        lambda row: f"{row['Subject_ID']}\nA:{row['Actual_Cat']} P:{row['Predicted_Cat']}",
         axis=1,
     )
     colors = ["seagreen" if ok else "indianred" for ok in plot_df["Correct"]]
 
-    fig, ax = plt.subplots(figsize=(max(6, len(plot_df) * 1.3), 4))
+    fig, ax = plt.subplots(figsize=(max(8, len(plot_df) * 0.32), 4))
     ax.bar(plot_df["Label"], plot_df["Num_Stimuli"], color=colors)
     ax.set_ylabel("Number of Stimuli")
-    ax.set_title("Subject-Level Majority Vote Outcomes")
-    ax.tick_params(axis="x", labelrotation=45)
+    ax.set_title("XGBoost Binary Subject-Level Majority Vote Outcomes")
+    ax.tick_params(axis="x", labelrotation=90, labelsize=7)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "subject_majority_vote_overview.png", dpi=150)
+    fig.savefig(OUT_DIR / "xgb_binary_subject_majority_vote_overview.png", dpi=150)
     plt.close(fig)
 
 
@@ -114,7 +141,7 @@ def save_task_prediction_chart(task_summary: pd.DataFrame) -> None:
 
     fig, ax = plt.subplots(figsize=(12, max(6, len(pivot) * 0.28)))
     left = np.zeros(len(pivot))
-    colors = {"Short": "#d95f02", "Normal": "#1b9e77", "Long": "#7570b3"}
+    colors = {"LowSleep": "#d95f02", "HigherSleep": "#1b9e77"}
 
     for label in LABELS:
         values = pivot[label].to_numpy()
@@ -123,10 +150,10 @@ def save_task_prediction_chart(task_summary: pd.DataFrame) -> None:
 
     ax.set_xlabel("Number of Stimulus-Level Predictions")
     ax.set_ylabel("Task")
-    ax.set_title("Predicted Class Distribution by Task")
+    ax.set_title("XGBoost Binary Predicted Class Distribution by Task")
     ax.legend(title="Predicted")
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "task_prediction_distribution.png", dpi=150)
+    fig.savefig(OUT_DIR / "xgb_binary_task_prediction_distribution.png", dpi=150)
     plt.close(fig)
 
 
@@ -146,7 +173,7 @@ def save_task_prediction_heatmap(task_summary: pd.DataFrame) -> None:
         .sort_index()
     )
 
-    fig, ax = plt.subplots(figsize=(7, max(6, len(pivot) * 0.28)))
+    fig, ax = plt.subplots(figsize=(6, max(6, len(pivot) * 0.28)))
     im = ax.imshow(pivot.to_numpy(), cmap="YlGnBu", aspect="auto")
     ax.set_xticks(range(len(LABELS)))
     ax.set_xticklabels(LABELS)
@@ -154,24 +181,29 @@ def save_task_prediction_heatmap(task_summary: pd.DataFrame) -> None:
     ax.set_yticklabels(pivot.index)
     ax.set_xlabel("Predicted Class")
     ax.set_ylabel("Task")
-    ax.set_title("Task x Predicted Class Heatmap")
+    ax.set_title("XGBoost Binary Task x Predicted Class Heatmap")
     fig.colorbar(im, ax=ax, shrink=0.8)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "task_prediction_heatmap.png", dpi=150)
+    fig.savefig(OUT_DIR / "xgb_binary_task_prediction_heatmap.png", dpi=150)
     plt.close(fig)
 
 
 def main() -> None:
     df = pd.read_csv(INPUT_FILE)
 
-    feature_cols = [c for c in df.columns if c.startswith("POW.") or c.startswith("PM.")]
+    feature_cols = [col for col in df.columns if col.startswith("POW.") or col.startswith("PM.")]
     if not feature_cols:
         raise ValueError(f"No POW./PM. features found in {INPUT_FILE}")
 
-    X = df[feature_cols].to_numpy()
-    y_hours = df["Sleep_Hours"].to_numpy()
-    y_cat = pd.cut(y_hours, bins=BINS, labels=LABELS, right=False).astype(str)
+    X = df[feature_cols].to_numpy(dtype=float)
+    y_hours = df["Sleep_Hours"].to_numpy(dtype=float)
+    y_cat = np.array([make_binary_label(value) for value in y_hours], dtype=object)
+    y_num = np.array([0 if label == "LowSleep" else 1 for label in y_cat], dtype=int)
     groups = df["Subject_ID"].astype(str).to_numpy()
+
+    low_count = int((y_num == 0).sum())
+    high_count = int((y_num == 1).sum())
+    scale_pos_weight = low_count / high_count if high_count else 1.0
 
     print(f"Loaded stimulus-level table: {df.shape}")
     print(f"Features: {len(feature_cols)}")
@@ -186,26 +218,32 @@ def main() -> None:
     stimulus_predictions = []
     subject_predictions = []
 
-    for fold, (train_idx, test_idx) in enumerate(logo.split(X, y_cat, groups), start=1):
+    for fold, (train_idx, test_idx) in enumerate(logo.split(X, y_num, groups), start=1):
         X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y_cat[train_idx], y_cat[test_idx]
+        y_train = y_num[train_idx]
 
         test_df = df.iloc[test_idx].copy()
         test_subject = str(test_df["Subject_ID"].iloc[0])
-        true_subject_label = str(test_df["Sleep_Hours"].pipe(lambda s: pd.cut(s, bins=BINS, labels=LABELS, right=False)).astype(str).iloc[0])
+        true_subject_label = make_binary_label(float(test_df["Sleep_Hours"].iloc[0]))
 
-        clf = RandomForestClassifier(
-            n_estimators=500,
-            max_features="sqrt",
-            class_weight="balanced",
+        clf = XGBClassifier(
+            n_estimators=200,
+            max_depth=4,
+            learning_rate=0.05,
+            subsample=0.85,
+            colsample_bytree=0.85,
+            objective="binary:logistic",
+            eval_metric="logloss",
+            scale_pos_weight=scale_pos_weight,
             random_state=RANDOM_STATE,
             n_jobs=-1,
         )
         clf.fit(X_train, y_train)
-        row_pred = clf.predict(X_test)
+        row_pred_num = clf.predict(X_test)
         row_proba = clf.predict_proba(X_test)
+        row_pred = np.where(row_pred_num == 0, "LowSleep", "HigherSleep")
 
-        for _, row, pred in zip(test_idx, test_df.itertuples(index=False), row_pred):
+        for row, pred in zip(test_df.itertuples(index=False), row_pred):
             stimulus_predictions.append(
                 {
                     "Fold": fold,
@@ -217,7 +255,7 @@ def main() -> None:
                 }
             )
 
-        final_pred, vote_counts = majority_vote(list(row_pred), row_proba, clf.classes_)
+        final_pred, vote_counts = majority_vote(list(row_pred), row_proba)
         subject_predictions.append(
             {
                 "Fold": fold,
@@ -226,9 +264,8 @@ def main() -> None:
                 "Actual_Cat": true_subject_label,
                 "Predicted_Cat": final_pred,
                 "Num_Stimuli": len(test_df),
-                "Votes_Short": vote_counts.get("Short", 0),
-                "Votes_Normal": vote_counts.get("Normal", 0),
-                "Votes_Long": vote_counts.get("Long", 0),
+                "Votes_LowSleep": vote_counts.get("LowSleep", 0),
+                "Votes_HigherSleep": vote_counts.get("HigherSleep", 0),
             }
         )
 
@@ -255,9 +292,9 @@ def main() -> None:
         .sort_values(["Task", "Actual_Cat", "Predicted_Cat"])
     )
 
-    subject_df.to_csv(OUT_DIR / "subject_majority_vote_predictions.csv", index=False)
-    stimulus_df.to_csv(OUT_DIR / "stimulus_level_predictions.csv", index=False)
-    task_summary.to_csv(OUT_DIR / "task_prediction_summary.csv", index=False)
+    subject_df.to_csv(OUT_DIR / "xgb_binary_subject_majority_vote_predictions.csv", index=False)
+    stimulus_df.to_csv(OUT_DIR / "xgb_binary_stimulus_predictions.csv", index=False)
+    task_summary.to_csv(OUT_DIR / "xgb_binary_task_summary.csv", index=False)
 
     metrics_text = (
         f"Input file: {INPUT_FILE}\n"
@@ -265,23 +302,24 @@ def main() -> None:
         f"Stimulus rows: {len(df)}\n"
         f"Tasks: {df['Task'].nunique()}\n"
         f"Features: {len(feature_cols)}\n"
-        f"Evaluation: Leave-One-Subject-Out CV\n\n"
-        f"Subject-level accuracy: {acc:.4f}\n"
-        f"Subject-level F1 (macro): {f1_macro:.4f}\n\n"
-        f"Classification report:\n{report}\n"
-        f"Confusion matrix (rows=actual, cols=predicted; labels={LABELS}):\n{cm}\n"
+        f"Model: XGBClassifier\n"
+        f"Evaluation: Leave-One-Subject-Out CV with subject-level majority vote\n\n"
+        f"Accuracy : {acc:.4f}\n"
+        f"F1 macro : {f1_macro:.4f}\n\n"
+        f"{report}\n"
     )
-    (OUT_DIR / "stimulus_majority_vote_metrics.txt").write_text(metrics_text)
+    (OUT_DIR / "xgb_binary_metrics.txt").write_text(metrics_text)
 
-    save_subject_confusion_matrix(cm)
+    save_confusion_matrix(cm)
     save_subject_vote_chart(subject_df)
     save_task_prediction_chart(task_summary)
     save_task_prediction_heatmap(task_summary)
 
-    print("\nSubject-level majority-vote results")
+    print("\nXGBoost binary subject-level majority-vote results")
     print(f"Accuracy        : {acc:.4f}")
     print(f"F1 (macro)      : {f1_macro:.4f}")
-    print(f"\n{report}")
+    print()
+    print(report)
     print(f"Saved outputs to: {OUT_DIR}")
 
 

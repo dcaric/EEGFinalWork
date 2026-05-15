@@ -6,7 +6,8 @@ import pandas as pd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-DATA_DIR = PROJECT_ROOT / "data"
+PRIMARY_DATA_DIR = PROJECT_ROOT / "all_data"
+FALLBACK_DATA_DIR = PROJECT_ROOT / "data"
 METADATA_PATH = PROJECT_ROOT / "DatasetSub_shorten.csv"
 REFERENCE_TASKS_PATH = PROJECT_ROOT / "pilot_files" / "all_task_ready.csv"
 
@@ -16,6 +17,14 @@ DIAG_OUTPUT = SCRIPT_DIR / "all_task_window_ready_diagnostics.csv"
 
 MIN_OVERALL_CQ = 0.7
 MIN_CHANNEL_CQ = 2
+
+
+def resolve_data_dir() -> Path:
+    if PRIMARY_DATA_DIR.is_dir():
+        return PRIMARY_DATA_DIR
+    if FALLBACK_DATA_DIR.is_dir():
+        return FALLBACK_DATA_DIR
+    raise FileNotFoundError("Neither all_data/ nor data/ exists in the project root.")
 
 
 def quality_mask(data: pd.DataFrame) -> pd.Series:
@@ -34,12 +43,13 @@ def quality_mask(data: pd.DataFrame) -> pd.Series:
 
 
 def load_subject_metadata() -> pd.DataFrame:
+    data_dir = resolve_data_dir()
     metadata_df = pd.read_csv(METADATA_PATH, sep=";", header=1, decimal=",")
     metadata_df = metadata_df.dropna(subset=["ID"]).copy()
     metadata_df["ID_upper"] = metadata_df["ID"].astype(str).str.strip().str.upper()
     metadata_df["Folder_Name"] = metadata_df["ID_upper"].str.lower()
     metadata_df["Folder_Exists"] = metadata_df["Folder_Name"].apply(
-        lambda folder: (DATA_DIR / folder).is_dir()
+        lambda folder: (data_dir / folder).is_dir() or (data_dir / folder.upper()).is_dir()
     )
     metadata_df["Sleep_Hours_Num"] = pd.to_numeric(
         metadata_df["Average Sleep Hours per Night"], errors="coerce"
@@ -53,10 +63,12 @@ def load_allowed_tasks() -> set[str]:
 
 
 def main() -> None:
+    data_dir = resolve_data_dir()
     print("--- Building window-level and stimulus-level datasets ---")
     available_df = load_subject_metadata()
     allowed_tasks = load_allowed_tasks()
 
+    print(f"Using data directory: {data_dir}")
     print(f"Subjects with local folders: {len(available_df)}")
     print(f"Allowed tasks inferred from pilot_files/all_task_ready.csv: {len(allowed_tasks)}")
 
@@ -66,8 +78,11 @@ def main() -> None:
     for _, meta_row in available_df.iterrows():
         subject_id = str(meta_row["ID"]).strip().upper()
         folder_name = str(meta_row["Folder_Name"]).strip()
-        data_path = DATA_DIR / folder_name / "data.csv"
-        marker_path = DATA_DIR / folder_name / "marker.csv"
+        subject_dir = data_dir / folder_name
+        if not subject_dir.is_dir():
+            subject_dir = data_dir / folder_name.upper()
+        data_path = subject_dir / "data.csv"
+        marker_path = subject_dir / "marker.csv"
 
         if not data_path.exists() or not marker_path.exists():
             continue

@@ -189,11 +189,24 @@ Run:
 python3 enhanced_preparation/build_windowed_stimulus_datasets.py
 ```
 
-This creates:
+This creates the following files in:
+
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation`
 
 - [all_task_window_ready.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_window_ready.csv)
 - [all_task_stimulus_median_ready.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_stimulus_median_ready.csv)
 - [all_task_window_ready_diagnostics.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_window_ready_diagnostics.csv)
+
+What each file contains:
+
+- `all_task_window_ready.csv`
+  - one row per `subject x stimulus x window`
+  - contains FFT and PM features for each cleaned raw row inside each valid task segment
+- `all_task_stimulus_median_ready.csv`
+  - one row per `subject x stimulus`
+  - contains the median across windows for each FFT and PM feature
+- `all_task_window_ready_diagnostics.csv`
+  - task-level diagnostics about filtering, missing markers, and segment extraction status
 
 ### Step 2: Run the new majority-vote model
 
@@ -203,16 +216,41 @@ Run:
 python3 src/3_modelling/run_stimulus_majority_vote_cv.py
 ```
 
-This uses:
+This uses as input:
 
 - [all_task_stimulus_median_ready.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_stimulus_median_ready.csv)
 
-and creates:
+and creates the following files in:
+
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv`
 
 - [subject_majority_vote_predictions.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/subject_majority_vote_predictions.csv)
 - [stimulus_level_predictions.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/stimulus_level_predictions.csv)
 - [task_prediction_summary.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/task_prediction_summary.csv)
 - [stimulus_majority_vote_metrics.txt](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/stimulus_majority_vote_metrics.txt)
+- [subject_majority_vote_confusion.png](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/subject_majority_vote_confusion.png)
+- [subject_majority_vote_overview.png](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/subject_majority_vote_overview.png)
+- [task_prediction_distribution.png](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/task_prediction_distribution.png)
+- [task_prediction_heatmap.png](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/task_prediction_heatmap.png)
+
+What each file contains:
+
+- `subject_majority_vote_predictions.csv`
+  - one final prediction per subject after majority vote across that subject's stimuli
+- `stimulus_level_predictions.csv`
+  - one prediction per `subject x stimulus` row
+- `task_prediction_summary.csv`
+  - grouped summary showing how often each task/stimulus was predicted as `Short`, `Normal`, or `Long`
+- `stimulus_majority_vote_metrics.txt`
+  - subject-level metrics such as accuracy, macro F1, classification report, and confusion matrix
+- `subject_majority_vote_confusion.png`
+  - subject-level confusion matrix image
+- `subject_majority_vote_overview.png`
+  - subject-level majority-vote overview chart
+- `task_prediction_distribution.png`
+  - per-task distribution of predicted classes
+- `task_prediction_heatmap.png`
+  - heatmap of `task x predicted class`
 
 ### Step 3: Interpret the outputs
 
@@ -249,6 +287,50 @@ For the new approach, the correct workflow is:
 python3 enhanced_preparation/build_windowed_stimulus_datasets.py
 python3 src/3_modelling/run_stimulus_majority_vote_cv.py
 ```
+
+## Full Workflow Summary
+
+The complete workflow for the new approach is:
+
+1. Prepare the raw data into a window-level and stimulus-level representation
+
+```bash
+python3 enhanced_preparation/build_windowed_stimulus_datasets.py
+```
+
+Generated files:
+
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_window_ready.csv`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_stimulus_median_ready.csv`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_window_ready_diagnostics.csv`
+
+2. Train and evaluate the new majority-vote model
+
+```bash
+python3 src/3_modelling/run_stimulus_majority_vote_cv.py
+```
+
+Generated files:
+
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/subject_majority_vote_predictions.csv`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/stimulus_level_predictions.csv`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/task_prediction_summary.csv`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/stimulus_majority_vote_metrics.txt`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/subject_majority_vote_confusion.png`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/subject_majority_vote_overview.png`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/task_prediction_distribution.png`
+- `/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/task_prediction_heatmap.png`
+
+3. Inspect results at both levels
+
+- subject level:
+  - final predicted class after majority vote
+- stimulus level:
+  - which tasks are pushing the model toward `Short`, `Normal`, or `Long`
+
+4. Compare this pipeline against the older fully aggregated subject-level pipeline
+
+The new pipeline is intended to answer whether preserving stimulus-level structure improves the model compared with a single subject-average representation.
 
 ## Current Takeaway
 

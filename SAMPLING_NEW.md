@@ -177,6 +177,79 @@ The next real step is:
 3. run the majority-vote modeling pipeline on that full dataset
 4. compare the new stimulus-level approach against the old fully aggregated subject-level approach
 
+## End-to-End Workflow
+
+For this new professor-guided pipeline, the workflow is:
+
+### Step 1: Build the new datasets from raw subject folders
+
+Run:
+
+```bash
+python3 enhanced_preparation/build_windowed_stimulus_datasets.py
+```
+
+This creates:
+
+- [all_task_window_ready.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_window_ready.csv)
+- [all_task_stimulus_median_ready.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_stimulus_median_ready.csv)
+- [all_task_window_ready_diagnostics.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_window_ready_diagnostics.csv)
+
+### Step 2: Run the new majority-vote model
+
+Run:
+
+```bash
+python3 src/3_modelling/run_stimulus_majority_vote_cv.py
+```
+
+This uses:
+
+- [all_task_stimulus_median_ready.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/enhanced_preparation/all_task_stimulus_median_ready.csv)
+
+and creates:
+
+- [subject_majority_vote_predictions.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/subject_majority_vote_predictions.csv)
+- [stimulus_level_predictions.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/stimulus_level_predictions.csv)
+- [task_prediction_summary.csv](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/task_prediction_summary.csv)
+- [stimulus_majority_vote_metrics.txt](/Users/dcaric/Working/pythonWorking/PaolaFinalWork/results/stimulus_majority_vote_cv/stimulus_majority_vote_metrics.txt)
+
+### Step 3: Interpret the outputs
+
+The new pipeline should be interpreted at two levels:
+
+- stimulus level:
+  - for which tasks/stimuli the model tends to predict `Short`, `Normal`, or `Long`
+- subject level:
+  - final label after majority vote across all available stimuli for that subject
+
+### Step 4: Compare against the old pipeline
+
+Once the full dataset is available, compare:
+
+- the old subject-level fully aggregated pipeline
+- the new stimulus-level majority-vote pipeline
+
+This comparison will show whether preserving stimulus-level structure improves sleep-group prediction.
+
+## Important Note About the Old Pipeline
+
+For this new experiment, do **not** use the old workflow:
+
+```bash
+python3 src/3_modelling_scripts/modelling_tables.py
+python3 src/3_modelling/run_cv.py
+```
+
+Those scripts belong to the older fully aggregated subject-level approach.
+
+For the new approach, the correct workflow is:
+
+```bash
+python3 enhanced_preparation/build_windowed_stimulus_datasets.py
+python3 src/3_modelling/run_stimulus_majority_vote_cv.py
+```
+
 ## Current Takeaway
 
 The old pipeline was probably too aggressively aggregated.

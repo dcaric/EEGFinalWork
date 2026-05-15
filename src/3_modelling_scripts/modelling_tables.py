@@ -63,4 +63,3 @@ exp3 = df_top.groupby('Subject_ID').agg(
 exp3.to_csv(f'{OUTPUT_DIR}/exp3_task_specific.csv', index=False)
 print(f'Exp3: {exp3.shape}')  # expected (~83, 72) — same structure as exp1
 print(f'Exp3 NaN check: {exp3.isnull().sum().sum()} NaN values')
-
